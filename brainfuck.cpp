@@ -11,6 +11,14 @@
 #include <string.h>
 #endif
 
+#define ASSERT(cond, msg) if (cond) { fprintf(stderr, msg "\n"); exit(1); };
+
+typedef struct
+{
+	char* input;
+	size_t input_size;
+} prog_data;
+
 typedef struct bf_state
 {
 	uint8_t* cell;
@@ -54,11 +62,6 @@ void stk_free(stk_state* stack)
 	free(stack);
 }
 
-// if we ever wanted to take brainfuck speed seriously, do a pass to precalculate cell bounds & "JIT" it somehow
-// wherein the cell decrement/increments are pre-calculated (never zero)
-
-
-//--<-<<+[+[<+>--->->->-<<<]>]<<--.<++++++.<<-..<<.<+.>>.>>.<<<.+++.>>.>>-.<<<+.
 int bf_single_pass_validate(bf_state* s)
 {
 	unsigned begin_p = 0;
@@ -68,48 +71,42 @@ int bf_single_pass_validate(bf_state* s)
 
 	for (uint32_t c = 0; c < s->code_size; c++)
 	{
-	    //printf("%c = %c\n", c, s->code[c]);
 		uint8_t chr = s->code[c];
 		if (chr == '[')
 		{
-			printf("%c", chr);
 			begin_p++;
 			stk_push(stack, c);
 			continue;
 		}
 		if (chr == ']')
 		{
-			printf("%c", chr);
 			if (begin_p == 0 || begin_p == end_p)
 			{
-				// error, no open parenthesis
+				fprintf(stderr, "No open parenthesis\n");
 				stk_free(stack);
 				return 1;
 			}
 			end_p++;
 			uint32_t opening = stk_pop(stack);
 			s->loop_map[c] = opening;
-			//printf("at %i is %c\n", c, s->code[c]);
 			s->loop_map[opening] = c;
-			//printf("at %i is %c\n", opening, s->code[opening]);
 			continue;
 		}
-		if (chr != '+' && chr != '-' && chr != '.' && chr != '<' && chr != '>' && chr != ',' && chr != '[' && chr != ']')
+		if (chr != '+' && chr != '-' && chr != '.' && chr != '<' && chr != '>' && chr != ',')
 		{
-			// error, character not valid
-			//stk_free(stack);
-			//return 1;
-		} else printf("%c", chr);
+			fprintf(stderr, "Input not valid\n");
+			stk_free(stack);
+			return 1;
+		};
 	}
 	if (begin_p != end_p)
 	{
-		// error, loops not balanced
+		fprintf(stderr, "Loops not balanced\n");
 		stk_free(stack);
 		return 1;
 	}
-	// successful
+
 	stk_free(stack);
-	printf("\n");
 	return 0;
 }
 
@@ -119,28 +116,24 @@ int bf_run(bf_state* s)
 	{
 		if (s->pc >= s->code_size)
 			return 0;
-		//printf("switching, pc = %i\n", s->pc);
 		uint8_t instr = s->code[s->pc];
 		switch(instr)
 		{
 			case '+':
 			{
-				//printf("%c: ptr = %02i, pc = %02i, cell_size = %02i\n", instr, s->ptr, s->pc, s->cell_size);
 				s->cell[s->ptr]++;
 				s->pc++;
 				continue;
 			}
 			case '-':
 			{
-				//printf("%c: ptr = %02i, pc = %02i, cell_size = %02i\n", instr, s->ptr, s->pc, s->cell_size);
 				s->cell[s->ptr]--;
 				s->pc++;
 				continue;
 			}
 			case '<':
 			{
-				//printf("%c: ptr = %02i, pc = %02i, cell_size = %02i\n", instr, s->ptr, s->pc, s->cell_size);
-				if (s->ptr == 0) // real ptr is 0, reallocate at + 1
+				if (s->ptr == 0)
 				{
 					uint32_t new_size = s->cell_size + 1;
 					uint8_t* new_cell = (uint8_t*)malloc(new_size);
@@ -152,13 +145,12 @@ int bf_run(bf_state* s)
 					s->pc++;
 					continue;
 				}
-				s->ptr--; // not 0? do normal
+				s->ptr--;
 				s->pc++;
 				continue;
 			}
 			case '>':
 			{
-				//printf("%c: ptr = %02i, pc = %02i, cell_size = %02i\n", instr, s->ptr, s->pc, s->cell_size);
 				if (s->ptr + 1 == s->cell_size)
 				{
 					uint32_t new_size = s->cell_size + 1;
@@ -175,7 +167,6 @@ int bf_run(bf_state* s)
 			}
 			case ']':
 			{
-				//printf("%c: ptr = %02i, pc = %02i, cell_size = %02i\n", instr, s->ptr, s->pc, s->cell_size);
 				if (s->cell[s->ptr] != 0)
 				{
 					s->pc = s->loop_map[s->pc];
@@ -185,7 +176,6 @@ int bf_run(bf_state* s)
 			}
 			case '[':
 			{
-				//printf("%c: ptr = %02i, pc = %02i, cell_size = %02i\n", instr, s->ptr, s->pc, s->cell_size);
 			    if (s->cell[s->ptr] == 0)
 			    {
 			        s->pc = s->loop_map[s->pc];
@@ -195,14 +185,12 @@ int bf_run(bf_state* s)
 			}
 			case '.':
 			{
-				//printf("%c: ptr = %02i, pc = %02i, cell_size = %02i\n", instr, s->ptr, s->pc, s->cell_size);
 				putc(s->cell[s->ptr], stdout);
 				s->pc++;
 				continue;
 			}
 			case ',':
 			{
-				//printf("%c: ptr = %02i, pc = %02i, cell_size = %02i\n", instr, s->ptr, s->pc, s->cell_size);
 				s->cell[s->ptr] = getc(stdin);
 				s->pc++;
 				continue;
@@ -217,12 +205,12 @@ int bf_run(bf_state* s)
 	return 0;
 }
 
-int bf_init(bf_state* s, const uint8_t* code)
+int bf_init(bf_state* s, const prog_data* pd)
 {
-	const uint32_t code_size = strlen((const char*)code);
+	const uint32_t code_size = pd->input_size;
 	uint8_t* new_code = (uint8_t*)malloc(code_size);
 	uint32_t* new_loop_map = (uint32_t*)malloc(code_size * 4);
-	memcpy(new_code, code, code_size);
+	memcpy(new_code, pd->input, code_size);
 	
 	s->code = new_code;
 	s->code_size = code_size;
@@ -245,12 +233,70 @@ int bf_exit(bf_state* s)
 	return 0;
 }
 
+int prog_arghandle(int argc, char* argv[], prog_data* pd)
+{
+	if (argc > 1)
+	{
+		int idx = 1;
+		for (; idx <= argc; ++idx)
+		{
+			char* arg = argv[idx];
+			if (!strcmp(arg, "-f")) /* -f for brainfuck from file */
+			{
+				int fidx = ++idx;
+				if (fidx <= argc)
+				{
+					char* ffile = argv[fidx];
+
+					FILE* f = fopen(ffile, "r");
+					ASSERT(!f, "Could not open file");
+
+					fseek(f, 0, SEEK_END);
+					int fsize = ftell(f);
+					rewind(f);
+
+					char* fdata = (char*)malloc(fsize);
+					ASSERT(!fdata, "Failed to allocate buffer");
+					bool failure = fread(fdata, 1, fsize, f) != fsize;
+					ASSERT(failure, "Failed to read file");
+
+					pd->input = fdata;
+					pd->input_size = fsize - 1;
+					return 0;
+				}
+				fprintf(stderr, "No file after -f\n");
+			}
+			if (!strcmp(arg, "-i")) /* -i for brainfuck from command line */
+			{
+				int fidx = ++idx;
+				if (fidx <= argc)
+				{
+					char* finput = argv[fidx];
+
+					pd->input = finput;
+					pd->input_size = strlen(finput);
+					return 0;
+				}
+				fprintf(stderr, "No string after -i\n");
+				return 1;
+			}
+			fprintf(stderr, "Invalid argument\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "Not enough arguments\n");
+	return 1;
+}
+
 int main(int argc, char* argv[])
 {
-    printf("Input -> %s\n", argv[1]);
+	prog_data* pd = (prog_data*)malloc(sizeof(prog_data));
+	int failure = prog_arghandle(argc, argv, pd);
+	ASSERT(failure, "Argument handling failed, exiting");
+
     bf_state* s = (bf_state*)malloc(sizeof(bf_state));
-    //bf_init(s, (const uint8_t*)("[.....]+>>>[-]<[-]++++++++[->+++++++++<]>.----[--<+++>]<-.+++++++.><.+++.[-][[-]>[-]+++++++++[<+++++>-]<+...--------------.>++++++++++[<+++++>-]<.+++.-------.>+++++++++[<----->-]<.-.>++++++++[<+++++++>-]<++.-----------.--.-----------.+++++++.----.++++++++++++++.>++++++++++[<----->-]<..[-]++++++++++.[-]+++++++[.,]-]<<-++++++++[>++++++++<-]>[<++++>-]+<[>-<[>++++<-]>[<++++++++>-]<[>++++++++<-]+>[>>+[<]>-<++>[-]++++++[<+++++++>-]<.------------.[-]<[>+<[-]]>++++++++>[-]++++++++++[<+++++++++++>-]<.--------.+++.------.--------.[-]<[-]<[-]>]<[>>++>[-]+++++[<++++++>-]<.[-]+>>++++[-<<[->++++<]>[-<+>]>]<+<[>>>[-]++++++++++[<+++++++++++>-]<+++++++++.--------.+++.------.--------.[-]<[-]<[-]]>[>>[-]>[-]+++++++++[<++++++++++>-]<.>++++[<+++++>-]<+.--.-----------.+++++++.----.[-]<<[-]]<<<[-]]>[-]<]>[>+++++[>++++<-]>[<+++++++++++++>-]<----[[-]>[-]+++++[<++++++>-]<++.>+++++[<+++++++>-]<.>++++++[<+++++++>-]<+++++.>++++[<---->-]<-.++.++++++++.------.-.[-]]++>[-]+++++[<++++++>-]<.[-]>++[>++<-]>[<<+>>[-<<[>++++<-]>[<++++>-]>]]<<[>++++[>---<++++]>++.[<++>+]<.[>+<------]>.+++.[<--->++]<--.[-]<[-]][-]>[-]>[-]<++[>++++++++<-]>[<++++++++>-]<[>++++++++<-]>[<++++++++>-]<[<++++++++>-]<[[-]>[-]+++++++++[<++++++++++>-]<.>++++[<+++++>-]<+.--.-----------.+++++++.----.>>[-]<+++++[>++++++<-]>++.<<[-]][-]<[>+<[-]]>+++++>[-]+++++++++[<+++++++++>-]<.>++++[<++++++>-]<.+++.------.--------.[-]<[-]]<+[[>]<-]>>[<[[<[[<[[<[,]]]<]<]<]<][-]]+>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>-[+<-]+++[->++++++<]>[-<+++++++>]<[->>[>]+[<]<]>>[->]<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<--[>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>++<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<+]+>----[++++>----]-[+<-]+[>]<-[-<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<++++>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>][..][>++++++[<+++>-]<+[>+++++++++<-]>+[[->+>+<<]>>[-<<+>>]<[<[->>+<<]+>[->>+<<]+[>]<-]<-]<[-<]]>+[>[[-]+++>[-]++++++-[<++++++>-]<.<[-]>[-]]+<]<++++++++[[>]+[<]>-]>[>]<[[-]<]+[[>]<-[,]+[>]<-[]][-]>[-]>[-]>[-]>[-]>[-]>[-]>[-]<<<<<<<++++[->>++++>>++++>>++++<<<<<<]++++++++++++++>>>>+>>++<<<<<<[->>[->+>[->+>[->+>+[>>>+<<]>>[-<<+>]<-[<<<[-]<<[-]<<[-]<<[-]>>>[-]>>[-]>>[-]>->+]<<<]>[-<+>]<<<]>[-<+>]<<<]>[-<+>]<<<]>+>[[-]<->]<[->>>>>>>[-<<<<<<<<+>>>>>>>>]<<<<<<<]<>+<[>[-]>[-]+++++[<++++++>-]<++.[-]<[[->>+<<]>>[-<++>[-<+>[-<+>[-<+>[-<+>[-<+>[-<+>[-<+>[-<+>[<[-]+>->+<[<-]]]]]]]]]]>]<<[>++++++[<++++++++>-]<-.[-]<]]]>[>[-]>[-]++++[<++++++++>-]<[<++++++++>-]>+++[<++++++++>-]<+++++++[<-------->-]<------->+<[[-]>-<]>[>[-]<[-]++++[->++++++++<]>.++++++[-<++>]<.[-->+++<]>++.<++++[>----<-]>.[-]<]<[-]>[-]++++++++[<++++++++>-]<[>++++<-]+>[<->[-]]<[>[-]<[-]++++[->++++++++<]>.---[-<+++>]<.---.--------------.[-->+<]>--.[-]<]]<++++++++[[>]+[<]>-]>[>]<[[-]<][-]++++++++++.[-][,,.]<<"));
-    bf_init(s, (const uint8_t*)("--<-<<+[+[<+>--->->->-<<<]>]<<--.<++++++.<<-..<<.<+.>>.>>.<<<.+++.>>.>>-.<<<+."));
+
+    bf_init(s, pd);
     bf_single_pass_validate(s);
     #ifdef __cplusplus
     	auto begin = std::chrono::high_resolution_clock::now();
