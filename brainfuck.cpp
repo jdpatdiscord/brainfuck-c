@@ -54,7 +54,7 @@ void buf_checkresize(buffer* buf, size_t extra)
 void buf_addchar(buffer* buf, char c)
 {
 	buf_checkresize(buf, sizeof(c));
-	buf->buffer[++buf->pointer] = c;
+	buf->buffer[buf->pointer++] = c;
 }
 
 #define ASSERT(cond, msg) if (cond) { fputs(msg "\n", stderr); exit(1); };
@@ -233,7 +233,6 @@ int bf_run(bf_state* s)
 			case '.':
 			{
 				buf_addchar(&s->output, s->cell[s->ptr]);
-				putc(s->cell[s->ptr], stdout);
 				s->pc++;
 				continue;
 			}
@@ -282,6 +281,7 @@ int bf_exit(bf_state* s)
 	s->loop_map = NULL;
 	s->code = NULL;
 	s->cell = NULL;
+	fprintf(stdout, "%.*s", s->output.pointer, (char*)s->output.buffer);
 	buf_free(&s->output);
 	free(s);
 	return 0;
