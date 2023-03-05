@@ -11,7 +11,53 @@
 #include <string.h>
 #endif
 
-#define ASSERT(cond, msg) if (cond) { fprintf(stderr, msg "\n"); exit(1); };
+typedef struct
+{
+	char* buffer;
+	size_t size;
+	size_t pointer;
+} buffer;
+
+void buf_new(buffer* buf)
+{
+	if (buf->buffer != NULL)
+		free(buf->buffer);
+	buf->buffer = (char*)calloc(16, 1);
+	buf->size = 64;
+	buf->pointer = 0;
+}
+
+void buf_free(buffer* buf)
+{
+	if (buf->buffer)
+	{
+		free(buf->buffer);
+		buf->buffer = NULL;
+	}
+	buf->size = 0;
+	buf->pointer = 0;
+}
+
+void buf_checkresize(buffer* buf, size_t extra)
+{
+	size_t original = buf->size;
+	while(buf->pointer + extra >= buf->size)
+		buf->size *= 2;
+	if (buf->size == original)
+		return;
+	char* newbuf = (char*)malloc(buf->size);
+	memcpy(newbuf, buf->buffer, original);
+	free(buf->buffer);
+	buf->buffer = newbuf;
+}
+
+void buf_addchar(buffer* buf, char c)
+{
+	buf_checkresize(buf, sizeof(c));
+	buf->buffer[++buf->pointer] = c;
+}
+
+#define ASSERT(cond, msg) if (cond) { fputs(msg "\n", stderr); exit(1); };
 
 typedef struct
 {
@@ -21,12 +67,13 @@ typedef struct
 
 typedef struct bf_state
 {
-	uint8_t* cell;
-	uint32_t cell_size;
-	uint32_t ptr;
-	uint32_t* loop_map;
+	buffer output;
 	uint8_t* code;
 	uint32_t code_size;
+	uint8_t* cell;
+	uint32_t cell_size;
+	uint32_t* loop_map;
+	uint32_t ptr;
 	uint32_t pc;
 } bf_state;
 
@@ -59,6 +106,7 @@ uint32_t stk_pop(stk_state* stack)
 void stk_free(stk_state* stack)
 {
 	free(stack->memory);
+	stack->memory = NULL;
 	free(stack);
 }
 
@@ -69,12 +117,13 @@ int bf_single_pass_validate(bf_state* s)
 
 	stk_state* stack = stk_create_now(s->code_size);
 
-	for (uint32_t c = 0; c < s->code_size; c++)
+    uint32_t c = 0;
+	for (; c < s->code_size; ++c)
 	{
 		uint8_t chr = s->code[c];
 		if (chr == '[')
 		{
-			begin_p++;
+			++begin_p;
 			stk_push(stack, c);
 			continue;
 		}
@@ -82,11 +131,11 @@ int bf_single_pass_validate(bf_state* s)
 		{
 			if (begin_p == 0 || begin_p == end_p)
 			{
-				fprintf(stderr, "No open parenthesis\n");
+				fputs("No open parenthesis\n", stderr);
 				stk_free(stack);
 				return 1;
 			}
-			end_p++;
+			++end_p;
 			uint32_t opening = stk_pop(stack);
 			s->loop_map[c] = opening;
 			s->loop_map[opening] = c;
@@ -94,14 +143,14 @@ int bf_single_pass_validate(bf_state* s)
 		}
 		if (chr != '+' && chr != '-' && chr != '.' && chr != '<' && chr != '>' && chr != ',')
 		{
-			fprintf(stderr, "Input not valid\n");
+			fputs("Input not valid\n", stderr);
 			stk_free(stack);
 			return 1;
 		};
 	}
 	if (begin_p != end_p)
 	{
-		fprintf(stderr, "Loops not balanced\n");
+		fputs("Loops not balanced\n", stderr);
 		stk_free(stack);
 		return 1;
 	}
@@ -136,8 +185,7 @@ int bf_run(bf_state* s)
 				if (s->ptr == 0)
 				{
 					uint32_t new_size = s->cell_size + 1;
-					uint8_t* new_cell = (uint8_t*)malloc(new_size);
-					new_cell[new_size] = 0;
+					uint8_t* new_cell = (uint8_t*)calloc(new_size, 1);
 					memcpy(new_cell + 1, s->cell, s->cell_size);
 					free(s->cell);
 					s->cell_size = new_size;
@@ -154,8 +202,7 @@ int bf_run(bf_state* s)
 				if (s->ptr + 1 == s->cell_size)
 				{
 					uint32_t new_size = s->cell_size + 1;
-					uint8_t* new_cell = (uint8_t*)malloc(new_size);
-					memset(new_cell, 0, new_size);
+					uint8_t* new_cell = (uint8_t*)calloc(new_size, 1);
 					memcpy(new_cell, s->cell, s->cell_size);
 					free(s->cell);
 					s->cell_size = new_size;
@@ -185,12 +232,15 @@ int bf_run(bf_state* s)
 			}
 			case '.':
 			{
+				buf_addchar(&s->output, s->cell[s->ptr]);
 				putc(s->cell[s->ptr], stdout);
 				s->pc++;
 				continue;
 			}
 			case ',':
 			{
+				fprintf(stdout, "%.*s", s->output.pointer, (char*)s->output.buffer);
+				buf_new(&s->output);
 				s->cell[s->ptr] = getc(stdin);
 				s->pc++;
 				continue;
@@ -211,13 +261,13 @@ int bf_init(bf_state* s, const prog_data* pd)
 	uint8_t* new_code = (uint8_t*)malloc(code_size);
 	uint32_t* new_loop_map = (uint32_t*)malloc(code_size * 4);
 	memcpy(new_code, pd->input, code_size);
-	
+
+	buf_new(&s->output);
 	s->code = new_code;
 	s->code_size = code_size;
-	s->loop_map = new_loop_map;
-	s->cell = (uint8_t*)malloc(1);
-	s->cell[0] = 0;
+	s->cell = (uint8_t*)calloc(1, 1);
 	s->cell_size = 1;
+	s->loop_map = new_loop_map;
 	s->ptr = 0;
 	s->pc = 0;
 
@@ -229,6 +279,10 @@ int bf_exit(bf_state* s)
 	free(s->loop_map);
 	free(s->code);
 	free(s->cell);
+	s->loop_map = NULL;
+	s->code = NULL;
+	s->cell = NULL;
+	buf_free(&s->output);
 	free(s);
 	return 0;
 }
@@ -248,7 +302,7 @@ int prog_arghandle(int argc, char* argv[], prog_data* pd)
 				{
 					char* ffile = argv[fidx];
 
-					FILE* f = fopen(ffile, "r");
+					FILE* f = fopen(ffile, "rb");
 					ASSERT(!f, "Could not open file");
 
 					fseek(f, 0, SEEK_END);
@@ -257,14 +311,15 @@ int prog_arghandle(int argc, char* argv[], prog_data* pd)
 
 					char* fdata = (char*)malloc(fsize);
 					ASSERT(!fdata, "Failed to allocate buffer");
-					bool failure = fread(fdata, 1, fsize, f) != fsize;
+					int failure = fread(fdata, 1, fsize, f) != fsize;
 					ASSERT(failure, "Failed to read file");
 
 					pd->input = fdata;
 					pd->input_size = fsize - 1;
 					return 0;
 				}
-				fprintf(stderr, "No file after -f\n");
+				fputs("No file after -f\n", stderr);
+				return 1;
 			}
 			if (!strcmp(arg, "-i")) /* -i for brainfuck from command line */
 			{
@@ -277,14 +332,14 @@ int prog_arghandle(int argc, char* argv[], prog_data* pd)
 					pd->input_size = strlen(finput);
 					return 0;
 				}
-				fprintf(stderr, "No string after -i\n");
+				fputs("No string after -i\n", stderr);
 				return 1;
 			}
-			fprintf(stderr, "Invalid argument\n");
+			fputs("Invalid argument\n", stderr);
 			return 1;
 		}
 	}
-	fprintf(stderr, "Not enough arguments\n");
+	fputs("Not enough arguments\n", stderr);
 	return 1;
 }
 
@@ -294,19 +349,21 @@ int main(int argc, char* argv[])
 	int failure = prog_arghandle(argc, argv, pd);
 	ASSERT(failure, "Argument handling failed, exiting");
 
-    bf_state* s = (bf_state*)malloc(sizeof(bf_state));
+    bf_state* s = (bf_state*)calloc(sizeof(bf_state), 1);
 
-    bf_init(s, pd);
-    bf_single_pass_validate(s);
     #ifdef __cplusplus
     	auto begin = std::chrono::high_resolution_clock::now();
     #endif
+    bf_init(s, pd);
+    bf_single_pass_validate(s);
     bf_run(s);
     #ifdef __cplusplus
 	    auto end = std::chrono::high_resolution_clock::now();
 	    auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(end - begin);
-	    printf("µs elapsed: %i\n", elapsed.count());
+	    printf("\nmicroseconds elapsed: %i", elapsed.count());
     #endif
+    putc('\n', stdout);
     bf_exit(s);
+    free(pd);
     return 0;
 }
