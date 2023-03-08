@@ -11,6 +11,32 @@
 #include <string.h>
 #endif
 
+void* malloc_impl(size_t size)
+{
+	return malloc(size);
+}
+
+void* memset_impl(void* dst, int value, size_t bytecount)
+{
+	return memset(dst, value, bytecount);
+}
+
+void* calloc_impl(size_t nelems, size_t elemsize)
+{
+	void* block = malloc_impl(nelems * elemsize);
+	memset_impl(block, 0, nelems * elemsize);
+	return block;
+}
+void free_impl(void* block)
+{
+	free(block);
+}
+
+void* memcpy_impl(void* dst, void* src, size_t bytecount)
+{
+	return memcpy(dst, src, bytecount);
+}
+
 typedef struct
 {
 	char* buffer;
@@ -18,20 +44,21 @@ typedef struct
 	size_t pointer;
 } buffer;
 
+
 void buf_new(buffer* buf)
 {
 	if (buf->buffer != NULL)
-		free(buf->buffer);
-	buf->buffer = (char*)calloc(16, 1);
+		free_impl(buf->buffer);
 	buf->size = 64;
+	buf->buffer = (char*)malloc_impl(buf->size);
 	buf->pointer = 0;
 }
 
-void buf_free(buffer* buf)
+void buf_free_impl(buffer* buf)
 {
 	if (buf->buffer)
 	{
-		free(buf->buffer);
+		free_impl(buf->buffer);
 		buf->buffer = NULL;
 	}
 	buf->size = 0;
@@ -45,9 +72,9 @@ void buf_checkresize(buffer* buf, size_t extra)
 		buf->size *= 2;
 	if (buf->size == original)
 		return;
-	char* newbuf = (char*)malloc(buf->size);
-	memcpy(newbuf, buf->buffer, original);
-	free(buf->buffer);
+	char* newbuf = (char*)malloc_impl(buf->size);
+	memcpy_impl(newbuf, buf->buffer, original);
+	free_impl(buf->buffer);
 	buf->buffer = newbuf;
 }
 
@@ -57,7 +84,7 @@ void buf_addchar(buffer* buf, char c)
 	buf->buffer[buf->pointer++] = c;
 }
 
-#define ASSERT(cond, msg) if (cond) { fputs(msg "\n", stderr); exit(1); };
+#define ASSERT(cond, msg) if (cond) { fputs_impl(msg "\n", stderr); exit(1); };
 
 typedef struct
 {
@@ -86,8 +113,8 @@ typedef struct stk_state
 
 stk_state* stk_create_now(uint32_t size)
 {
-	stk_state* stack = (stk_state*)malloc(sizeof(stk_state));
-	stack->memory = (uint32_t*)malloc(size * 4);
+	stk_state* stack = (stk_state*)malloc_impl(sizeof(stk_state));
+	stack->memory = (uint32_t*)malloc_impl(size * 4);
 	stack->size = size;
 	stack->top = 0;
 	return stack;
@@ -103,11 +130,11 @@ uint32_t stk_pop(stk_state* stack)
 	return stack->memory[--stack->top];
 }
 
-void stk_free(stk_state* stack)
+void stk_free_impl(stk_state* stack)
 {
-	free(stack->memory);
+	free_impl(stack->memory);
 	stack->memory = NULL;
-	free(stack);
+	free_impl(stack);
 }
 
 int bf_single_pass_validate(bf_state* s)
@@ -131,8 +158,8 @@ int bf_single_pass_validate(bf_state* s)
 		{
 			if (begin_p == 0 || begin_p == end_p)
 			{
-				fputs("No open parenthesis\n", stderr);
-				stk_free(stack);
+				fputs_impl("No open parenthesis\n", stderr);
+				stk_free_impl(stack);
 				return 1;
 			}
 			++end_p;
@@ -143,19 +170,19 @@ int bf_single_pass_validate(bf_state* s)
 		}
 		if (chr != '+' && chr != '-' && chr != '.' && chr != '<' && chr != '>' && chr != ',')
 		{
-			fputs("Input not valid\n", stderr);
-			stk_free(stack);
+			fputs_impl("Input not valid\n", stderr);
+			stk_free_impl(stack);
 			return 1;
 		};
 	}
 	if (begin_p != end_p)
 	{
-		fputs("Loops not balanced\n", stderr);
-		stk_free(stack);
+		fputs_impl("Loops not balanced\n", stderr);
+		stk_free_impl(stack);
 		return 1;
 	}
 
-	stk_free(stack);
+	stk_free_impl(stack);
 	return 0;
 }
 
@@ -185,9 +212,9 @@ int bf_run(bf_state* s)
 				if (s->ptr == 0)
 				{
 					uint32_t new_size = s->cell_size + 1;
-					uint8_t* new_cell = (uint8_t*)calloc(new_size, 1);
-					memcpy(new_cell + 1, s->cell, s->cell_size);
-					free(s->cell);
+					uint8_t* new_cell = (uint8_t*)calloc_impl(new_size, 1);
+					memcpy_impl(new_cell + 1, s->cell, s->cell_size);
+					free_impl(s->cell);
 					s->cell_size = new_size;
 					s->cell = new_cell;
 					s->pc++;
@@ -202,9 +229,9 @@ int bf_run(bf_state* s)
 				if (s->ptr + 1 == s->cell_size)
 				{
 					uint32_t new_size = s->cell_size + 1;
-					uint8_t* new_cell = (uint8_t*)calloc(new_size, 1);
-					memcpy(new_cell, s->cell, s->cell_size);
-					free(s->cell);
+					uint8_t* new_cell = (uint8_t*)calloc_impl(new_size, 1);
+					memcpy_impl(new_cell, s->cell, s->cell_size);
+					free_impl(s->cell);
 					s->cell_size = new_size;
 					s->cell = new_cell;
 				}
@@ -238,7 +265,10 @@ int bf_run(bf_state* s)
 			}
 			case ',':
 			{
-				fprintf(stdout, "%.*s", s->output.pointer, (char*)s->output.buffer);
+				void* str = calloc_impl(s->output.pointer + 1, 1);
+				memcpy_impl(str, s->output.buffer, s->output.pointer);
+				fputs_impl(str, stdout);
+				free_impl(str);
 				buf_new(&s->output);
 				s->cell[s->ptr] = getc(stdin);
 				s->pc++;
@@ -257,14 +287,14 @@ int bf_run(bf_state* s)
 int bf_init(bf_state* s, const prog_data* pd)
 {
 	const uint32_t code_size = pd->input_size;
-	uint8_t* new_code = (uint8_t*)malloc(code_size);
-	uint32_t* new_loop_map = (uint32_t*)malloc(code_size * 4);
-	memcpy(new_code, pd->input, code_size);
+	uint8_t* new_code = (uint8_t*)malloc_impl(code_size);
+	uint32_t* new_loop_map = (uint32_t*)malloc_impl(code_size * 4);
+	memcpy_impl(new_code, pd->input, code_size);
 
 	buf_new(&s->output);
 	s->code = new_code;
 	s->code_size = code_size;
-	s->cell = (uint8_t*)calloc(1, 1);
+	s->cell = (uint8_t*)calloc_impl(1, 1);
 	s->cell_size = 1;
 	s->loop_map = new_loop_map;
 	s->ptr = 0;
@@ -275,15 +305,20 @@ int bf_init(bf_state* s, const prog_data* pd)
 
 int bf_exit(bf_state* s)
 {
-	free(s->loop_map);
-	free(s->code);
-	free(s->cell);
+	free_impl(s->loop_map);
+	free_impl(s->code);
+	free_impl(s->cell);
 	s->loop_map = NULL;
 	s->code = NULL;
 	s->cell = NULL;
-	fprintf(stdout, "%.*s", s->output.pointer, (char*)s->output.buffer);
-	buf_free(&s->output);
-	free(s);
+	
+	void* str = calloc_impl(s->output.pointer + 1, 1);
+	memcpy_impl(str, s->output.buffer, s->output.pointer);
+	fputs_impl(str, stdout);
+	free_impl(str);
+
+	buf_free_impl(&s->output);
+	free_impl(s);
 	return 0;
 }
 
@@ -309,7 +344,7 @@ int prog_arghandle(int argc, char* argv[], prog_data* pd)
 					int fsize = ftell(f);
 					rewind(f);
 
-					char* fdata = (char*)malloc(fsize);
+					char* fdata = (char*)malloc_impl(fsize);
 					ASSERT(!fdata, "Failed to allocate buffer");
 					int failure = fread(fdata, 1, fsize, f) != fsize;
 					ASSERT(failure, "Failed to read file");
@@ -318,7 +353,7 @@ int prog_arghandle(int argc, char* argv[], prog_data* pd)
 					pd->input_size = fsize - 1;
 					return 0;
 				}
-				fputs("No file after -f\n", stderr);
+				fputs_impl("No file after -f\n", stderr);
 				return 1;
 			}
 			if (!strcmp(arg, "-i")) /* -i for brainfuck from command line */
@@ -332,38 +367,38 @@ int prog_arghandle(int argc, char* argv[], prog_data* pd)
 					pd->input_size = strlen(finput);
 					return 0;
 				}
-				fputs("No string after -i\n", stderr);
+				fputs_impl("No string after -i\n", stderr);
 				return 1;
 			}
-			fputs("Invalid argument\n", stderr);
+			fputs_impl("Invalid argument\n", stderr);
 			return 1;
 		}
 	}
-	fputs("Not enough arguments\n", stderr);
+	fputs_impl("Not enough arguments\n", stderr);
 	return 1;
 }
 
 int main(int argc, char* argv[])
 {
-	prog_data* pd = (prog_data*)malloc(sizeof(prog_data));
+	prog_data* pd = (prog_data*)malloc_impl(sizeof(prog_data));
 	int failure = prog_arghandle(argc, argv, pd);
 	ASSERT(failure, "Argument handling failed, exiting");
 
-    bf_state* s = (bf_state*)calloc(sizeof(bf_state), 1);
+    bf_state* s = (bf_state*)calloc_impl(sizeof(bf_state), 1);
 
-    #ifdef __cplusplus
-    	auto begin = std::chrono::high_resolution_clock::now();
-    #endif
+    //#ifdef __cplusplus
+    //	auto begin = std::chrono::high_resolution_clock::now();
+    //#endif
     bf_init(s, pd);
     bf_single_pass_validate(s);
     bf_run(s);
-    #ifdef __cplusplus
-	    auto end = std::chrono::high_resolution_clock::now();
-	    auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(end - begin);
-	    printf("\nmicroseconds elapsed: %i", elapsed.count());
-    #endif
+    //#ifdef __cplusplus
+	//    auto end = std::chrono::high_resolution_clock::now();
+	//    auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(end - begin);
+	//    printf("\nmicroseconds elapsed: %i", elapsed.count());
+    //#endif
     putc('\n', stdout);
     bf_exit(s);
-    free(pd);
+    free_impl(pd);
     return 0;
 }
